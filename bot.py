@@ -1,9 +1,14 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 import asyncio
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
 
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
 
@@ -12,7 +17,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Active countdown tasks
+# One active countdown per server
 countdown_tasks = {}
 
 
@@ -41,9 +46,9 @@ async def setup(interaction: discord.Interaction):
         return
 
     await interaction.response.defer(ephemeral=True)
-
     guild = interaction.guild
 
+    # Create roles if missing
     roles = [
         ("Owner", discord.Colour.red()),
         ("Admin", discord.Colour.orange()),
@@ -55,7 +60,8 @@ async def setup(interaction: discord.Interaction):
 
     for role_name, colour in roles:
         existing_role = discord.utils.get(
-            guild.roles, name=role_name
+            guild.roles,
+            name=role_name
         )
 
         if existing_role is None:
@@ -66,6 +72,7 @@ async def setup(interaction: discord.Interaction):
             )
             created_roles += 1
 
+    # Categories and channels
     categories = {
         "📢 INFORMATION": [
             "👋・welcome",
@@ -94,7 +101,8 @@ async def setup(interaction: discord.Interaction):
 
     for category_name, channel_list in categories.items():
         category = discord.utils.get(
-            guild.categories, name=category_name
+            guild.categories,
+            name=category_name
         )
 
         if category is None:
@@ -106,7 +114,8 @@ async def setup(interaction: discord.Interaction):
 
         for channel_name in channel_list:
             existing_channel = discord.utils.get(
-                guild.channels, name=channel_name
+                guild.channels,
+                name=channel_name
             )
 
             if existing_channel is not None:
@@ -138,35 +147,36 @@ async def setup(interaction: discord.Interaction):
 
 
 # ==========================================
-# COUNTDOWN DISPLAY
+# COUNTDOWN HELPERS
 # ==========================================
 
-def format_countdown(seconds):
+def format_countdown(seconds: int) -> str:
     seconds = max(0, int(seconds))
 
     days, remainder = divmod(seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
-    minutes, secs = divmod(remainder, 60)
+    minutes, seconds = divmod(remainder, 60)
 
     return (
         f"**{days}** days · "
         f"**{hours}** hours · "
         f"**{minutes}** minutes · "
-        f"**{secs}** seconds"
+        f"**{seconds}** seconds"
     )
 
 
-def countdown_message(release_time, timezone_name):
-    now = datetime.now(timezone.utc)
-    remaining = (release_time - now).total_seconds()
+def countdown_message(
+    release_time: datetime,
+    timezone_name: str
+) -> str:
 
-    local_release = release_time.astimezone(
-        ZoneInfo(timezone_name)
-    )
+    remaining = (
+        release_time - datetime.now(timezone.utc)
+    ).total_seconds()
 
     if remaining <= 0:
         return (
-            "🥚 **CRACK AN EGG IS NOW LIVE!** 🎉\n\n"
+            "🥚 **CRACK AN EGG IS NOW LIVE!** 🎉🔥\n\n"
             "The wait is over! Go play **Crack an Egg**!\n\n"
             f"🕒 Released: <t:{int(release_time.timestamp())}:F>"
         )
@@ -183,29 +193,46 @@ def countdown_message(release_time, timezone_name):
 
 
 # ==========================================
-# COUNTDOWN BACKGROUND TASK
+# COUNTDOWN TASK
 # ==========================================
 
 async def run_countdown(
-    guild_id,
-    channel_id,
-    message_id,
-    release_time,
-    timezone_name
+    guild_id: int,
+    channel_id: int,
+    message_id: int,
+    release_time: datetime,
+    timezone_name: str
 ):
+    current_task = asyncio.current_task()
+
     try:
         channel = bot.get_channel(channel_id)
 
         if channel is None:
             channel = await bot.fetch_channel(channel_id)
 
+        if not isinstance(channel, discord.TextChannel):
+            print("Countdown channel is not a text channel.")
+            return
+
         message = await channel.fetch_message(message_id)
 
         while True:
-            now = datetime.now(timezone.utc)
-            remaining = (release_time - now).total_seconds()
+            remaining = (
+                release_time - datetime.now(timezone.utc)
+            ).total_seconds()
 
             if remaining <= 0:
+                # Update countdown first.
+                await message.edit(
+                    content=countdown_message(
+                        release_time,
+                        timezone_name
+                    ),
+                    allowed_mentions=discord.AllowedMentions.none()
+                )
+
+                # Send release ping once.
                 await channel.send(
                     "@everyone 🥚 **CRACK AN EGG IS NOW LIVE!** 🎉🔥\n\n"
                     "The countdown is over! Go play now!",
@@ -213,40 +240,44 @@ async def run_countdown(
                         everyone=True
                     )
                 )
-
-                await message.edit(
-                    content=countdown_message(
-                        release_time, timezone_name
-                    ),
-                    allowed_mentions=discord.AllowedMentions.none()
-                )
                 break
 
             await message.edit(
                 content=countdown_message(
-                    release_time, timezone_name
+                    release_time,
+                    timezone_name
                 ),
                 allowed_mentions=discord.AllowedMentions.none()
             )
 
-            # Update every minute, then refresh more frequently
-            # during the final minute.
+            # Update every second during the final minute,
+            # otherwise update every minute.
             await asyncio.sleep(
                 1 if remaining <= 60 else 60
             )
 
+    except asyncio.CancelledError:
+        # A replacement countdown was started.
+        raise
+
     except discord.NotFound:
         print(
-            f"Countdown message for guild {guild_id} was deleted."
+            f"Countdown message or channel not found "
+            f"for server {guild_id}."
         )
+
     except discord.Forbidden:
         print(
-            f"Missing permissions to update countdown in guild {guild_id}."
+            f"Missing permissions for countdown in server {guild_id}."
         )
+
     except Exception as error:
-        print(f"Countdown error: {error}")
+        print(f"Countdown error in server {guild_id}: {error}")
+
     finally:
-        countdown_tasks.pop(guild_id, None)
+        # Don't accidentally remove a newer countdown task.
+        if countdown_tasks.get(guild_id) is current_task:
+            countdown_tasks.pop(guild_id, None)
 
 
 # ==========================================
@@ -269,13 +300,14 @@ async def run_countdown(
 async def countdown(
     interaction: discord.Interaction,
     channel: discord.TextChannel,
-    year: int,
-    month: int,
-    day: int,
-    hour: int,
-    minute: int,
+    year: app_commands.Range[int, 2026, 2100],
+    month: app_commands.Range[int, 1, 12],
+    day: app_commands.Range[int, 1, 31],
+    hour: app_commands.Range[int, 0, 23],
+    minute: app_commands.Range[int, 0, 59],
     timezone_name: str = "America/New_York"
 ):
+
     if interaction.guild is None:
         await interaction.response.send_message(
             "❌ Use this command inside your server.",
@@ -285,16 +317,30 @@ async def countdown(
 
     if not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message(
-            "❌ You need Manage Server permission to use this command.",
+            "❌ You need **Manage Server** permission to use this command.",
+            ephemeral=True
+        )
+        return
+
+    if channel.guild.id != interaction.guild.id:
+        await interaction.response.send_message(
+            "❌ Choose a channel from this server.",
             ephemeral=True
         )
         return
 
     try:
         tz = ZoneInfo(timezone_name)
+
         local_release = datetime(
-            year, month, day, hour, minute, tzinfo=tz
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            tzinfo=tz
         )
+
         release_time = local_release.astimezone(timezone.utc)
 
     except (ValueError, ZoneInfoNotFoundError):
@@ -312,22 +358,59 @@ async def countdown(
         )
         return
 
+    # Check channel permissions before starting.
+    permissions = channel.permissions_for(interaction.guild.me)
+
+    if not permissions.view_channel or not permissions.send_messages:
+        await interaction.response.send_message(
+            "❌ I need permission to view and send messages in that channel.",
+            ephemeral=True
+        )
+        return
+
+    if not permissions.read_message_history:
+        await interaction.response.send_message(
+            "❌ I also need **Read Message History** in that channel.",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.defer(ephemeral=True)
 
-    # Stop the previous countdown in this server, if there is one.
+    # Stop the old countdown if one exists.
     old_task = countdown_tasks.get(interaction.guild.id)
 
-    if old_task is not None:
+    if old_task is not None and not old_task.done():
         old_task.cancel()
+        try:
+            await old_task
+        except asyncio.CancelledError:
+            pass
 
-    # Post one @everyone ping when the countdown begins.
-    message = await channel.send(
-        "@everyone 🥚 **CRACK AN EGG RELEASE COUNTDOWN!** 🔥\n\n"
-        + countdown_message(release_time, timezone_name),
-        allowed_mentions=discord.AllowedMentions(
-            everyone=True
+    # Post the initial countdown and ping everyone once.
+    try:
+        message = await channel.send(
+            "@everyone 🥚 **CRACK AN EGG RELEASE COUNTDOWN!** 🔥\n\n"
+            + countdown_message(release_time, timezone_name),
+            allowed_mentions=discord.AllowedMentions(
+                everyone=True
+            )
         )
-    )
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I can't post in that channel or ping everyone. "
+            "Check my channel permissions and the permission to mention @everyone.",
+            ephemeral=True
+        )
+        return
+
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"❌ Discord rejected the countdown message: {error}",
+            ephemeral=True
+        )
+        return
 
     task = asyncio.create_task(
         run_countdown(
@@ -349,10 +432,6 @@ async def countdown(
     )
 
 
-# Import required for slash-command descriptions.
-from discord import app_commands
-
-
 # ==========================================
 # BOT READY
 # ==========================================
@@ -369,6 +448,7 @@ async def on_ready():
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash command(s)")
         print("🥚 Crack an Egg bot is online!")
+
     except Exception as error:
         print("❌ Slash command sync failed:")
         print(error)
@@ -379,8 +459,16 @@ async def on_ready():
 # ==========================================
 
 if not TOKEN:
+    print("")
+    print("================================")
     print("❌ BOT TOKEN NOT FOUND")
-    print("Set DISCORD_TOKEN or TOKEN in Wispbyte.")
+    print("================================")
+    print("Set one of these Wispbyte variables:")
+    print("DISCORD_TOKEN")
+    print("or")
+    print("TOKEN")
+    print("================================")
+
 else:
     print("🔑 Bot token found.")
     print("🚀 Starting bot...")
