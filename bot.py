@@ -21,8 +21,8 @@ EASTERN = ZoneInfo(TIMEZONE_NAME)
 # CRACK AN EGG RELEASE DATE
 RELEASE_YEAR = 2026
 RELEASE_MONTH = 10
-RELEASE_DAY = 18
-RELEASE_HOUR = 18  # 6 PM Eastern Time
+RELEASE_DAY = 10
+RELEASE_HOUR = 18  # 6:00 PM Eastern Time
 RELEASE_MINUTE = 0
 
 logging.basicConfig(level=logging.INFO)
@@ -85,7 +85,7 @@ def countdown_message(release_time):
         "👀 GET READY TO CRACK SOME EGGS!\n"
         "🎮 GET YOUR FRIENDS. GET THE SQUAD READY.\n"
         "🔥 **WE'RE ABOUT TO GO CRAZY!** 🔥\n\n"
-        "📅 **OCTOBER 18, 2026**\n"
+        "📅 **OCTOBER 10, 2026**\n"
         "🕕 **6:00 PM EASTERN TIME**\n\n"
         "🥚 **THE NEXT BIG ADVENTURE STARTS HERE!** 🥚"
     )
@@ -131,7 +131,7 @@ async def run_countdown(guild_id, channel_id, message_id, release_time):
                 allowed_mentions=discord.AllowedMentions.none()
             )
 
-            # Update the countdown every second.
+            # Refresh the countdown every second.
             await asyncio.sleep(1)
 
     except asyncio.CancelledError:
@@ -175,7 +175,6 @@ async def setup(interaction: discord.Interaction):
 
     guild = interaction.guild
 
-    # Create roles if they don't already exist.
     for role_name in ["Owner", "Admin", "Mod", "Member"]:
         if discord.utils.get(guild.roles, name=role_name) is None:
             await guild.create_role(name=role_name)
@@ -269,7 +268,7 @@ async def countdown(
 
     if release_time <= datetime.now(EASTERN):
         await interaction.response.send_message(
-            "❌ The configured release date has passed. "
+            "❌ October 10 at 6:00 PM Eastern has passed. "
             "Update the release date settings at the top of bot.py.",
             ephemeral=True
         )
@@ -312,7 +311,7 @@ async def countdown(
         thinking=True
     )
 
-    # Stop the previous countdown in this server, if one exists.
+    # Stop the previous countdown in this server.
     old_task = countdown_tasks.get(guild.id)
 
     if old_task and not old_task.done():
@@ -324,7 +323,7 @@ async def countdown(
             pass
 
     try:
-        # Ping everyone once when the countdown is posted.
+        # Ping everyone when the countdown is first posted.
         message = await channel.send(
             "@everyone\n" + countdown_message(release_time),
             allowed_mentions=discord.AllowedMentions(
@@ -351,9 +350,9 @@ async def countdown(
     countdown_tasks[guild.id] = task
 
     await interaction.followup.send(
-        f"✅ **HYPE COUNTDOWN POSTED!**\n"
+        "✅ **HYPE COUNTDOWN POSTED!**\n"
         f"📢 Channel: {channel.mention}\n"
-        f"📅 October 18, 2026 at 6:00 PM Eastern Time\n"
+        "📅 October 10, 2026 at 6:00 PM Eastern Time\n"
         f"🕒 Timezone: `{TIMEZONE_NAME}`\n"
         "🔥 The countdown will update every second!",
         ephemeral=True
@@ -417,7 +416,7 @@ async def main():
     if not TOKEN:
         raise RuntimeError(
             "Missing bot token. Set DISCORD_TOKEN or TOKEN "
-            "in your host's environment variables."
+            "in your hosting environment variables."
         )
 
     async with bot:
