@@ -1,209 +1,55 @@
+
+import os
+import asyncio
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
-import asyncio
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
+# ---------------- CONFIG ----------------
 
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+TIMEZONE_NAME = "America/New_York"
+EASTERN = ZoneInfo(TIMEZONE_NAME)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("crack_an_egg_bot")
 
 intents = discord.Intents.default()
-intents.guilds = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# One active countdown per server
 countdown_tasks = {}
 
+# ---------------- COUNTDOWN HELPERS ----------------
 
-# ==========================================
-# /setup
-# ==========================================
-
-@bot.tree.command(
-    name="setup",
-    description="Set up the Crack an Egg server"
-)
-async def setup(interaction: discord.Interaction):
-
-    if interaction.guild is None:
-        await interaction.response.send_message(
-            "❌ This command can only be used in a server.",
-            ephemeral=True
-        )
-        return
-
-    if interaction.guild.owner_id != interaction.user.id:
-        await interaction.response.send_message(
-            "❌ Only the server owner can use this command.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    guild = interaction.guild
-
-    # Create roles if missing
-    roles = [
-        ("Owner", discord.Colour.red()),
-        ("Admin", discord.Colour.orange()),
-        ("Mod", discord.Colour.blue()),
-        ("Member", discord.Colour.green())
-    ]
-
-    created_roles = 0
-
-    for role_name, colour in roles:
-        existing_role = discord.utils.get(
-            guild.roles,
-            name=role_name
-        )
-
-        if existing_role is None:
-            await guild.create_role(
-                name=role_name,
-                colour=colour,
-                reason="Crack an Egg server setup"
-            )
-            created_roles += 1
-
-    # Categories and channels
-    categories = {
-        "📢 INFORMATION": [
-            "👋・welcome",
-            "📜・rules",
-            "📢・announcements",
-            "📰・updates",
-            "🎁・codes"
-        ],
-        "💬 COMMUNITY": [
-            "💬・general",
-            "💡・suggestions",
-            "🐛・bug-reports",
-            "📸・media",
-            "🎮・game-chat",
-            "🔊・VC"
-        ],
-        "🛡️ STAFF": [
-            "📋・staff-chat",
-            "🚨・reports",
-            "📑・mod-logs"
-        ]
-    }
-
-    created_categories = 0
-    created_channels = 0
-
-    for category_name, channel_list in categories.items():
-        category = discord.utils.get(
-            guild.categories,
-            name=category_name
-        )
-
-        if category is None:
-            category = await guild.create_category(
-                category_name,
-                reason="Crack an Egg server setup"
-            )
-            created_categories += 1
-
-        for channel_name in channel_list:
-            existing_channel = discord.utils.get(
-                guild.channels,
-                name=channel_name
-            )
-
-            if existing_channel is not None:
-                continue
-
-            if channel_name == "🔊・VC":
-                await guild.create_voice_channel(
-                    channel_name,
-                    category=category,
-                    reason="Crack an Egg server setup"
-                )
-            else:
-                await guild.create_text_channel(
-                    channel_name,
-                    category=category,
-                    reason="Crack an Egg server setup"
-                )
-
-            created_channels += 1
-
-    await interaction.followup.send(
-        "🥚 **Crack an Egg setup complete!**\n\n"
-        f"👑 Roles created: **{created_roles}**\n"
-        f"📁 Categories created: **{created_categories}**\n"
-        f"💬 Channels created: **{created_channels}**\n\n"
-        "⚙️ **Permissions were NOT changed.**",
-        ephemeral=True
-    )
-
-
-# ==========================================
-# COUNTDOWN HELPERS
-# ==========================================
-
-def format_countdown(seconds: int) -> str:
+def format_countdown(seconds):
     seconds = max(0, int(seconds))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
 
-    days, remainder = divmod(seconds, 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    return (
-        f"**{days}** days · "
-        f"**{hours}** hours · "
-        f"**{minutes}** minutes · "
-        f"**{seconds}** seconds"
-    )
+    return f"{days}d {hours:02}h {minutes:02}m {seconds:02}s"
 
 
-def countdown_message(
-    release_time: datetime,
-    timezone_name: str
-) -> str:
-
-    remaining = (
-        release_time - datetime.now(timezone.utc)
-    ).total_seconds()
+def countdown_message(release_time):
+    now = datetime.now(EASTERN)
+    remaining = (release_time - now).total_seconds()
 
     if remaining <= 0:
-        return (
-            "🥚 **CRACK AN EGG IS NOW LIVE!** 🎉🔥\n\n"
-            "The wait is over! Go play **Crack an Egg**!\n\n"
-            f"🕒 Released: <t:{int(release_time.timestamp())}:F>"
-        )
+        return "🎉 **CRACK AN EGG IS NOW LIVE!**"
 
     return (
-        "🥚 **CRACK AN EGG RELEASE COUNTDOWN** 🔥\n\n"
-        "The game is almost here!\n\n"
-        f"⏳ **Time remaining:**\n"
-        f"{format_countdown(remaining)}\n\n"
-        f"📅 **Release time:** <t:{int(release_time.timestamp())}:F>\n"
-        f"🌎 **Timezone:** {timezone_name}\n\n"
-        "Get ready to crack some eggs! 🥚"
+        "🥚 **CRACK AN EGG RELEASE COUNTDOWN**\n"
+        f"⏳ Time remaining: **{format_countdown(remaining)}**\n"
+        "🕒 Timezone: **America/New_York (Eastern Time)**"
     )
 
 
-# ==========================================
-# COUNTDOWN TASK
-# ==========================================
-
-async def run_countdown(
-    guild_id: int,
-    channel_id: int,
-    message_id: int,
-    release_time: datetime,
-    timezone_name: str
-):
-    current_task = asyncio.current_task()
+async def run_countdown(guild_id, channel_id, message_id, release_time):
+    task = asyncio.current_task()
 
     try:
         channel = bot.get_channel(channel_id)
@@ -211,91 +57,142 @@ async def run_countdown(
         if channel is None:
             channel = await bot.fetch_channel(channel_id)
 
-        if not isinstance(channel, discord.TextChannel):
-            print("Countdown channel is not a text channel.")
-            return
-
         message = await channel.fetch_message(message_id)
 
         while True:
-            remaining = (
-                release_time - datetime.now(timezone.utc)
-            ).total_seconds()
+            now = datetime.now(EASTERN)
+            remaining = (release_time - now).total_seconds()
 
             if remaining <= 0:
-                # Update countdown first.
                 await message.edit(
-                    content=countdown_message(
-                        release_time,
-                        timezone_name
-                    ),
-                    allowed_mentions=discord.AllowedMentions.none()
+                    content="🎉 **CRACK AN EGG IS NOW LIVE!**"
                 )
-
-                # Send release ping once.
                 await channel.send(
-                    "@everyone 🥚 **CRACK AN EGG IS NOW LIVE!** 🎉🔥\n\n"
-                    "The countdown is over! Go play now!",
-                    allowed_mentions=discord.AllowedMentions(
-                        everyone=True
-                    )
+                    "@everyone 🎉 **CRACK AN EGG IS NOW LIVE!**",
+                    allowed_mentions=discord.AllowedMentions(everyone=True)
                 )
                 break
 
             await message.edit(
-                content=countdown_message(
-                    release_time,
-                    timezone_name
-                ),
+                content=countdown_message(release_time),
                 allowed_mentions=discord.AllowedMentions.none()
             )
 
-            # Update every second during the final minute,
-            # otherwise update every minute.
-            await asyncio.sleep(
-                1 if remaining <= 60 else 60
-            )
+            # Update once per second
+            await asyncio.sleep(1)
 
     except asyncio.CancelledError:
-        # A replacement countdown was started.
         raise
-
-    except discord.NotFound:
-        print(
-            f"Countdown message or channel not found "
-            f"for server {guild_id}."
-        )
-
-    except discord.Forbidden:
-        print(
-            f"Missing permissions for countdown in server {guild_id}."
-        )
-
-    except Exception as error:
-        print(f"Countdown error in server {guild_id}: {error}")
-
+    except Exception:
+        logger.exception("Countdown failed for guild %s", guild_id)
     finally:
-        # Don't accidentally remove a newer countdown task.
-        if countdown_tasks.get(guild_id) is current_task:
+        if countdown_tasks.get(guild_id) is task:
             countdown_tasks.pop(guild_id, None)
 
 
-# ==========================================
-# /countdown
-# ==========================================
+# ---------------- BOT SETUP COMMAND ----------------
+
+@bot.tree.command(
+    name="setup",
+    description="Create the Crack an Egg Discord server channels and roles"
+)
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(administrator=True)
+async def setup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    guild = interaction.guild
+
+    role_names = ["Owner", "Admin", "Mod", "Member"]
+
+    for role_name in role_names:
+        if discord.utils.get(guild.roles, name=role_name) is None:
+            await guild.create_role(name=role_name)
+
+    categories = {
+        "INFORMATION": [
+            "welcome",
+            "rules",
+            "announcements",
+            "updates",
+            "codes"
+        ],
+        "COMMUNITY": [
+            "general",
+            "suggestions",
+            "bug-reports",
+            "media",
+            "game-chat"
+        ],
+        "STAFF": [
+            "staff-chat",
+            "reports",
+            "mod-logs"
+        ]
+    }
+
+    for category_name, channel_names in categories.items():
+        category = discord.utils.get(
+            guild.categories,
+            name=category_name
+        )
+
+        if category is None:
+            category = await guild.create_category(category_name)
+
+        for channel_name in channel_names:
+            existing = discord.utils.get(
+                guild.text_channels,
+                name=channel_name
+            )
+
+            if existing is None:
+                await guild.create_text_channel(
+                    channel_name,
+                    category=category
+                )
+
+        if category_name == "COMMUNITY":
+            voice_name = "VC"
+            existing_voice = discord.utils.get(
+                guild.voice_channels,
+                name=voice_name
+            )
+
+            if existing_voice is None:
+                await guild.create_voice_channel(
+                    voice_name,
+                    category=category
+                )
+
+    await interaction.followup.send(
+        "✅ Server setup completed! Existing channels and roles were kept.",
+        ephemeral=True
+    )
+
+
+# ---------------- RELEASE COUNTDOWN COMMAND ----------------
 
 @bot.tree.command(
     name="countdown",
-    description="Post a countdown to the Crack an Egg release"
+    description="Post a live Crack an Egg release countdown"
 )
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
-    channel="Channel where the countdown will be posted",
-    year="Release year, e.g. 2026",
-    month="Release month, 1-12",
+    channel="Channel where the countdown will appear",
+    year="Release year (Eastern Time)",
+    month="Release month (1-12)",
     day="Release day",
-    hour="Release hour in 24-hour time, 0-23",
-    minute="Release minute, 0-59",
-    timezone_name="Timezone, e.g. America/New_York"
+    hour="Release hour (24-hour time, Eastern Time)",
+    minute="Release minute (Eastern Time)"
+)
+@app_commands.rename(
+    year="year",
+    month="month",
+    day="day",
+    hour="hour",
+    minute="minute"
 )
 async def countdown(
     interaction: discord.Interaction,
@@ -304,62 +201,46 @@ async def countdown(
     month: app_commands.Range[int, 1, 12],
     day: app_commands.Range[int, 1, 31],
     hour: app_commands.Range[int, 0, 23],
-    minute: app_commands.Range[int, 0, 59],
-    timezone_name: str = "America/New_York"
+    minute: app_commands.Range[int, 0, 59]
 ):
+    guild = interaction.guild
 
-    if interaction.guild is None:
+    if channel.guild.id != guild.id:
         await interaction.response.send_message(
-            "❌ Use this command inside your server.",
-            ephemeral=True
-        )
-        return
-
-    if not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message(
-            "❌ You need **Manage Server** permission to use this command.",
-            ephemeral=True
-        )
-        return
-
-    if channel.guild.id != interaction.guild.id:
-        await interaction.response.send_message(
-            "❌ Choose a channel from this server.",
+            "❌ Choose a channel in this server.",
             ephemeral=True
         )
         return
 
     try:
-        tz = ZoneInfo(timezone_name)
-
-        local_release = datetime(
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            tzinfo=tz
+        release_time = datetime(
+            year, month, day, hour, minute,
+            tzinfo=EASTERN
         )
-
-        release_time = local_release.astimezone(timezone.utc)
-
-    except (ValueError, ZoneInfoNotFoundError):
+    except ValueError:
         await interaction.response.send_message(
-            "❌ Invalid date, time, or timezone.\n"
-            "Example timezone: `America/New_York`",
+            "❌ That date is invalid. Check the month and day.",
             ephemeral=True
         )
         return
 
-    if release_time <= datetime.now(timezone.utc):
+    if release_time <= datetime.now(EASTERN):
         await interaction.response.send_message(
             "❌ The release time must be in the future.",
             ephemeral=True
         )
         return
 
-    # Check channel permissions before starting.
-    permissions = channel.permissions_for(interaction.guild.me)
+    bot_member = guild.get_member(bot.user.id)
+
+    if bot_member is None:
+        await interaction.response.send_message(
+            "❌ I couldn't verify my server permissions. Try again.",
+            ephemeral=True
+        )
+        return
+
+    permissions = channel.permissions_for(bot_member)
 
     if not permissions.view_channel or not permissions.send_messages:
         await interaction.response.send_message(
@@ -370,106 +251,80 @@ async def countdown(
 
     if not permissions.read_message_history:
         await interaction.response.send_message(
-            "❌ I also need **Read Message History** in that channel.",
+            "❌ I also need Read Message History in that channel.",
             ephemeral=True
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
 
-    # Stop the old countdown if one exists.
-    old_task = countdown_tasks.get(interaction.guild.id)
+    # Stop an existing countdown for this server, if one exists.
+    old_task = countdown_tasks.get(guild.id)
 
-    if old_task is not None and not old_task.done():
+    if old_task and not old_task.done():
         old_task.cancel()
         try:
             await old_task
         except asyncio.CancelledError:
             pass
 
-    # Post the initial countdown and ping everyone once.
     try:
         message = await channel.send(
-            "@everyone 🥚 **CRACK AN EGG RELEASE COUNTDOWN!** 🔥\n\n"
-            + countdown_message(release_time, timezone_name),
-            allowed_mentions=discord.AllowedMentions(
-                everyone=True
-            )
+            "@everyone\n" + countdown_message(release_time),
+            allowed_mentions=discord.AllowedMentions(everyone=True)
         )
-
     except discord.Forbidden:
         await interaction.followup.send(
-            "❌ I can't post in that channel or ping everyone. "
-            "Check my channel permissions and the permission to mention @everyone.",
-            ephemeral=True
-        )
-        return
-
-    except discord.HTTPException as error:
-        await interaction.followup.send(
-            f"❌ Discord rejected the countdown message: {error}",
+            "❌ I can't post there. Check my channel permissions.",
             ephemeral=True
         )
         return
 
     task = asyncio.create_task(
         run_countdown(
-            interaction.guild.id,
+            guild.id,
             channel.id,
             message.id,
-            release_time,
-            timezone_name
+            release_time
         )
     )
-
-    countdown_tasks[interaction.guild.id] = task
+    countdown_tasks[guild.id] = task
 
     await interaction.followup.send(
         f"✅ Countdown posted in {channel.mention}!\n"
-        f"📅 Release: <t:{int(release_time.timestamp())}:F>\n"
-        "🔔 Everyone was pinged.",
+        f"Release time: **{release_time.strftime('%B %d, %Y at %I:%M %p')} Eastern Time**\n"
+        "The displayed countdown updates every second.",
         ephemeral=True
     )
 
 
-# ==========================================
-# BOT READY
-# ==========================================
+# ---------------- STARTUP ----------------
 
 @bot.event
 async def on_ready():
-    print("")
-    print("================================")
-    print(f"🥚 Logged in as: {bot.user}")
-    print(f"🆔 Bot ID: {bot.user.id}")
-    print("================================")
+    logger.info("Logged in as %s", bot.user)
 
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s)")
-        print("🥚 Crack an Egg bot is online!")
-
-    except Exception as error:
-        print("❌ Slash command sync failed:")
-        print(error)
+        logger.info("Synced %s slash commands.", len(synced))
+    except Exception:
+        logger.exception("Slash command sync failed")
 
 
-# ==========================================
-# START BOT
-# ==========================================
+async def main():
+    if not TOKEN:
+        raise RuntimeError(
+            "Missing bot token. Set DISCORD_TOKEN or TOKEN in your host's environment variables."
+        )
 
-if not TOKEN:
-    print("")
-    print("================================")
-    print("❌ BOT TOKEN NOT FOUND")
-    print("================================")
-    print("Set one of these Wispbyte variables:")
-    print("DISCORD_TOKEN")
-    print("or")
-    print("TOKEN")
-    print("================================")
+    async with bot:
+        await bot.start(TOKEN)
 
-else:
-    print("🔑 Bot token found.")
-    print("🚀 Starting bot...")
-    bot.run(TOKEN)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except ZoneInfoNotFoundError:
+        raise RuntimeError(
+            "Timezone database missing. Install tzdata: pip install tzdata"
+        )
